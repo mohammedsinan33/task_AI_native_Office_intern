@@ -3,6 +3,7 @@ import './App.css'
 import { createEngine } from './engine/core.js'
 import { useMultiCellSelection } from './engine/Components/Multicell_selection.jsx'
 import { useMultiCellCopyPaste } from './engine/Components/Multicell_copy_paste.jsx'
+import { useColumnSort } from './engine/Components/Sort.jsx'
 
 const TOTAL_ROWS = 50
 const TOTAL_COLS = 50
@@ -81,6 +82,9 @@ export default function App() {
     editingCell,
     forceRerender
   })
+
+  // ────── Sort ──────
+  const { sortConfig, toggleSort } = useColumnSort({ engine, forceRerender })
 
   // Keep double click for explicit edit mode entry
   const handleCellDoubleClick = useCallback((row, col) => {
@@ -285,6 +289,21 @@ export default function App() {
           </div>
 
           <div className="toolbar-group">
+            <button 
+              className={`toolbar-btn sort-btn ${selectedCell && sortConfig.col === selectedCell.c ? 'active' : ''}`}
+              onClick={() => selectedCell && toggleSort(selectedCell.c)}
+              disabled={!selectedCell}
+              title={selectedCell ? `Sort Column ${getColumnLabel(selectedCell.c)}` : 'Select cell to sort'}
+              style={{ padding: '0 8px', minWidth: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              Sort {selectedCell && sortConfig.col === selectedCell.c 
+                 ? (sortConfig.direction === 'asc' ? ' ▲' : (sortConfig.direction === 'desc' ? ' ▼' : '')) 
+                 : ''}
+            </button>
+          </div>
+
+
+          <div className="toolbar-group">
             <span className="toolbar-label">Fill:</span>
             <select className="toolbar-select" value={selectedCellStyle?.bg || 'white'} onChange={(e) => changeBackgroundColor(e.target.value)}>
               <option value="white">White</option>
@@ -314,6 +333,12 @@ export default function App() {
             <button className="toolbar-btn danger" onClick={clearSelectedCell}>✕ Cell</button>
             <button className="toolbar-btn danger" onClick={clearAllCells}>✕ All</button>
           </div>
+          
+          <div className="toolbar-group">
+              <span className="toolbar-label" style={{marginLeft: '10px', fontSize: '11px', color: '#666'}}>
+                  Tip: Click column headers (A, B, C...) to sort
+              </span>
+          </div>
         </div>
 
         {/* ── Formula Bar ── */}
@@ -336,8 +361,19 @@ export default function App() {
               <tr>
                 <th className="col-header-blank"></th>
                 {Array.from({ length: engine.cols }, (_, colIndex) => (
-                  <th key={colIndex} className="col-header">
+                  <th 
+                    key={colIndex} 
+                    className="col-header sortable-header" 
+                    onClick={() => toggleSort(colIndex)}
+                    title="Click to sort A-Z / Z-A"
+                    style={{ cursor: 'pointer', position: 'relative' }}
+                  >
                     {getColumnLabel(colIndex)}
+                    <span className="sort-indicator" style={{ marginLeft: '4px', color: '#666', fontSize: '10px' }}>
+                        {sortConfig.col === colIndex 
+                           ? (sortConfig.direction === 'asc' ? ' ▲' : (sortConfig.direction === 'desc' ? ' ▼' : ''))
+                           : ''}
+                    </span>
                   </th>
                 ))}
               </tr>

@@ -2,7 +2,7 @@
 //  Operator precedence for expression parsing
 // ─────────────────────────────────────────────────────────────
 
-const OPERATOR_PRECEDENCE = { '+': 1, '-': 1, '*': 2, '/': 2 }
+const OPERATOR_PRECEDENCE = { '+': 1, '-': 1, '*': 2, '/': 2, ':': 3 }
 const MAX_UNDO_HISTORY = 100
 
 // ─────────────────────────────────────────────────────────────
@@ -243,11 +243,12 @@ function parseTokensToAST(tokens) {
         } else if (token.type === 'function') {
             operatorStack.push(token)
             position++
-        } else if (token.type === 'operator') {
+        } else if (token.type === 'operator' || token.type === 'range') {
+            const tokenValue = token.value; // ':' for range
             while (
                 operatorStack.length > 0 &&
-                operatorStack[operatorStack.length - 1].type === 'operator' &&
-                OPERATOR_PRECEDENCE[operatorStack[operatorStack.length - 1].value] >= OPERATOR_PRECEDENCE[token.value]
+                (operatorStack[operatorStack.length - 1].type === 'operator' || operatorStack[operatorStack.length - 1].type === 'range') &&
+                OPERATOR_PRECEDENCE[operatorStack[operatorStack.length - 1].value] >= OPERATOR_PRECEDENCE[tokenValue]
             ) {
                 outputQueue.push(operatorStack.pop())
             }
@@ -264,23 +265,11 @@ function parseTokensToAST(tokens) {
                 operatorStack.pop()
             }
             if (operatorStack.length > 0 && operatorStack[operatorStack.length - 1].type === 'function') {
+                // Just unstack the function token
+                // Do NOT try to link it with arguments yet - that happens in buildASTFromRPN
                 const funcToken = operatorStack.pop()
-                if (outputQueue.length > 0 && outputQueue[outputQueue.length - 1].type === 'range') {
-                    const rangeToken = outputQueue.pop()
-                    outputQueue.push({ type: 'function', name: funcToken.value, range: rangeToken })
-                } else {
-                    outputQueue.push(funcToken)
-                }
+                outputQueue.push(funcToken)
             }
-            position++
-        } else if (token.type === 'range') {
-            if (outputQueue.length < 2) throw new Error('Invalid range syntax')
-            const endCell = outputQueue.pop()
-            const startCell = outputQueue.pop()
-            if (startCell.type !== 'cell' || endCell.type !== 'cell') {
-                throw new Error('Range must be between two cell references')
-            }
-            outputQueue.push({ type: 'range', start: startCell.value, end: endCell.value })
             position++
         } else {
             position++
@@ -301,8 +290,16 @@ function buildASTFromRPN(rpnTokens) {
     const stack = []
 
     for (const token of rpnTokens) {
-        if (token.type === 'number' || token.type === 'cell' || token.type === 'range') {
+        if (token.type === 'number' || token.type === 'cell') {
             stack.push(token)
+        } else if (token.type === 'range') {
+            if (stack.length < 2) throw new Error('Invalid range syntax')
+            const endCell = stack.pop()
+            const startCell = stack.pop()
+            if (startCell.type !== 'cell' || endCell.type !== 'cell') {
+                throw new Error('Range must be between two cell references')
+            }
+            stack.push({ type: 'range', start: startCell.value, end: endCell.value })
         } else if (token.type === 'operator') {
             if (stack.length < 2) throw new Error('Invalid expression')
             const right = stack.pop()
@@ -316,6 +313,13 @@ function buildASTFromRPN(rpnTokens) {
                 const argument = stack.pop()
                 if (argument.type === 'range') {
                     stack.push({ type: 'function', name: token.value, range: argument })
+                } else if (argument.type === 'cell') {
+                    // Allow single cell argument by treating it as a range (e.g. SUM(A1))
+                    stack.push({ 
+                        type: 'function', 
+                        name: token.value, 
+                        range: { type: 'range', start: argument.value, end: argument.value } 
+                    })
                 } else {
                     throw new Error(`Function ${token.value} requires a range`)
                 }
@@ -332,6 +336,7 @@ function buildASTFromRPN(rpnTokens) {
 // ─────────────────────────────────────────────────────────────
 
 function expandCellRange(startKey, endKey) {
+    if (!startKey || !endKey) throw new Error('REF')
     const startMatch = startKey.match(/^([A-Z]+)(\d+)$/)
     const endMatch = endKey.match(/^([A-Z]+)(\d+)$/)
     if (!startMatch || !endMatch) throw new Error('REF')
@@ -383,20 +388,45 @@ function evaluateAST(ast, getCellValue, visited = new Set()) {
 
     if (ast.type === 'function') {
         const rangeCells = expandCellRange(ast.range.start, ast.range.end)
-        const values = rangeCells.map(cellKey => {
+        
+        // Retrieve values for all cells in range, handling circular dependencies
+        const rawValues = rangeCells.map(cellKey => {
             if (visited.has(cellKey)) throw new Error('CIRCULAR')
             visited.add(cellKey)
             const value = getCellValue(cellKey, visited)
             visited.delete(cellKey)
-            const num = parseFloat(value)
-            return isNaN(num) ? 0 : num
+            return value
         })
 
+        // Filter and convert to pure numbers for statistical functions
+        // Ignores empty strings, text, and nulls
+        const validNumbers = []
+        for (const v of rawValues) {
+            if (typeof v === 'number') {
+                validNumbers.push(v)
+            } else if (typeof v === 'string' && v.trim() !== '' && !isNaN(parseFloat(v))) {
+                validNumbers.push(parseFloat(v))
+            }
+        }
+
         switch (ast.name) {
-            case 'SUM': return values.reduce((sum, val) => sum + val, 0)
-            case 'AVG': return values.length === 0 ? 0 : values.reduce((sum, val) => sum + val, 0) / values.length
-            case 'MIN': return values.length === 0 ? 0 : Math.min(...values)
-            case 'MAX': return values.length === 0 ? 0 : Math.max(...values)
+            case 'SUM': {
+                return validNumbers.reduce((sum, val) => sum + val, 0)
+            }
+            case 'AVG': 
+            case 'AVERAGE': {
+                if (validNumbers.length === 0) return '#DIV/0!'
+                return validNumbers.reduce((sum, val) => sum + val, 0) / validNumbers.length
+            }
+            case 'MIN': {
+                return validNumbers.length === 0 ? 0 : Math.min(...validNumbers)
+            }
+            case 'MAX': {
+                return validNumbers.length === 0 ? 0 : Math.max(...validNumbers)
+            }
+            case 'COUNT': {
+                return validNumbers.length
+            }
             default: throw new Error('VALUE')
         }
     }
@@ -456,16 +486,53 @@ function shiftCellReferences(formula, rowShift, colShift, atIndex, isColumnOpera
 }
 
 function extractCellReferences(formula) {
-    const references = new Set()
-    // Extract cell references using regex
-    // Note: This regex matches cell references like A1, B2, AA10, etc.
-    // It does NOT extract individual cells from ranges (e.g., A1:A5 only extracts A1 and A5)
-    const regex = /([A-Z]+\d+)/g
-    let match
-    while ((match = regex.exec(formula)) !== null) {
-        references.add(match[1])
+    if (!formula || !formula.startsWith('=')) return new Set()
+    
+    // Attempt to parse formula and extract all dependencies including ranges
+    try {
+        const references = new Set()
+        const tokens = tokenize(formula.slice(1).trim())
+        const ast = parseTokensToAST(tokens)
+
+        const visit = (node) => {
+            if (!node) return
+            
+            if (node.type === 'cell') {
+                references.add(node.value)
+            } else if (node.type === 'range') {
+                const cells = expandCellRange(node.start, node.end)
+                for (const c of cells) references.add(c)
+            } else if (node.type === 'binary') {
+                visit(node.left)
+                visit(node.right)
+            } else if (node.type === 'function') {
+                // Function usually takes a range argument
+                if (node.range) {
+                    // Check if it's a range node
+                    if (node.range.type === 'range') {
+                        const cells = expandCellRange(node.range.start, node.range.end)
+                        for (const c of cells) references.add(c)
+                    } else {
+                        // Recursively visit if it's some other expression
+                        visit(node.range)
+                    }
+                }
+            }
+        }
+        
+        visit(ast)
+        return references
+    } catch (e) {
+        // Fallback to simple regex if parsing fails
+        // This ensures basic dependencies (e.g. A1, B2) are still caught even if syntax is invalid
+        const references = new Set()
+        const regex = /([A-Z]+\d+)/g
+        let match
+        while ((match = regex.exec(formula)) !== null) {
+            references.add(match[1])
+        }
+        return references
     }
-    return references
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -879,6 +946,10 @@ export function createEngine(initialRows = 50, initialCols = 50) {
             redoStack.push(entry)
             _generation++
             recalculate()
+        } else if (entry.type === 'reorder') {
+            redoStack.push({ ...entry, restoreSnap: takeSnapshot() })
+            restoreSnapshot(entry.snap)
+            recalculate()
         } else {
             // For structural changes (row/col insert/delete), save current state to redo
             // and restore the snapshot from undo entry
@@ -916,6 +987,10 @@ export function createEngine(initialRows = 50, initialCols = 50) {
             undoStack.push(entry)
             _generation++
             recalculate()
+        } else if (entry.type === 'reorder') {
+            undoStack.push({ ...entry, snap: takeSnapshot() })
+            restoreSnapshot(entry.snap)
+            recalculate()
         } else {
             undoStack.push({
                 ...entry,
@@ -929,6 +1004,46 @@ export function createEngine(initialRows = 50, initialCols = 50) {
             recalculate()
         }
         return true
+    }
+
+    function reorderRows(newOrder) {
+        if (newOrder.length !== rows) {
+            console.error('reorderRows: row count mismatch');
+            return;
+        }
+
+        const snapshot = takeSnapshot();
+        const oldCells = new Map();
+        
+        for (const [key, value] of snapshot.entries()) {
+            oldCells.set(key, value);
+        }
+
+        cells.clear();
+        graph.clear();
+        computedCache.clear();
+        dirtyCells.clear();
+        _generation++;
+
+        for (let r = 0; r < rows; r++) {
+            const oldR = newOrder[r];
+            for (let c = 0; c < cols; c++) {
+                const oldKey = cellKey(oldR, c);
+                if (oldCells.has(oldKey)) {
+                    const newKey = cellKey(r, c);
+                    cells.set(newKey, oldCells.get(oldKey));
+                }
+            }
+        }
+
+        for (const [key, value] of cells.entries()) {
+            if (value.raw && value.raw.startsWith('=')) updateDependencies(key, value.raw);
+        }
+        markAllCellsDirty();
+        
+        // Add to undo stack. We store the snapshot BEFORE reorder so we can restore it.
+        pushToUndoStack({ type: 'reorder', snap: snapshot }); 
+        recalculate();
     }
 
     // ── Public cell display (returns raw + computed + error) ──
@@ -964,6 +1079,7 @@ export function createEngine(initialRows = 50, initialCols = 50) {
         deleteRow: executeDeleteRow,
         insertColumn: executeInsertColumn,
         deleteColumn: executeDeleteColumn,
+        reorderRows,
         undo,
         redo,
         canUndo: () => undoStack.length > 0,
