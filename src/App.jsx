@@ -4,6 +4,7 @@ import { createEngine } from './engine/core.js'
 import { useMultiCellSelection } from './engine/Components/Multicell_selection.jsx'
 import { useMultiCellCopyPaste } from './engine/Components/Multicell_copy_paste.jsx'
 import { useColumnSort } from './engine/Components/Sort.jsx'
+import { useColumnFilter } from './engine/Components/Filter.jsx'
 
 const TOTAL_ROWS = 50
 const TOTAL_COLS = 50
@@ -85,6 +86,15 @@ export default function App() {
 
   // ────── Sort ──────
   const { sortConfig, toggleSort } = useColumnSort({ engine, forceRerender })
+
+  // ────── Filter ──────
+  const { 
+    filters, 
+    setFilter, 
+    filteredRows, 
+    showFilterInputs, 
+    toggleFilterInputs 
+  } = useColumnFilter({ engine, forceRerender })
 
   // Keep double click for explicit edit mode entry
   const handleCellDoubleClick = useCallback((row, col) => {
@@ -302,6 +312,17 @@ export default function App() {
             </button>
           </div>
 
+          <div className="toolbar-group">
+             <button
+               className={`toolbar-btn ${showFilterInputs ? 'active' : ''}`}
+               onClick={toggleFilterInputs}
+               title="Toggle Filters"
+               style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+             >
+               <span>🔍</span> Filter
+             </button>
+          </div>
+
 
           <div className="toolbar-group">
             <span className="toolbar-label">Fill:</span>
@@ -364,22 +385,45 @@ export default function App() {
                   <th 
                     key={colIndex} 
                     className="col-header sortable-header" 
-                    onClick={() => toggleSort(colIndex)}
                     title="Click to sort A-Z / Z-A"
-                    style={{ cursor: 'pointer', position: 'relative' }}
+                    style={{ position: 'relative', cursor: 'default' }}
                   >
-                    {getColumnLabel(colIndex)}
-                    <span className="sort-indicator" style={{ marginLeft: '4px', color: '#666', fontSize: '10px' }}>
-                        {sortConfig.col === colIndex 
-                           ? (sortConfig.direction === 'asc' ? ' ▲' : (sortConfig.direction === 'desc' ? ' ▼' : ''))
-                           : ''}
-                    </span>
+                    <div 
+                        onClick={() => toggleSort(colIndex)}
+                        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    >
+                        {getColumnLabel(colIndex)}
+                        <span className="sort-indicator" style={{ marginLeft: '4px', color: '#666', fontSize: '10px' }}>
+                            {sortConfig.col === colIndex 
+                            ? (sortConfig.direction === 'asc' ? ' ▲' : (sortConfig.direction === 'desc' ? ' ▼' : ''))
+                            : ''}
+                        </span>
+                    </div>
+
+                    {/* Filter Input */}
+                    {showFilterInputs && (
+                        <div style={{ padding: '2px 4px' }} onClick={(e) => e.stopPropagation()}>
+                            <input
+                                type="text"
+                                placeholder="Filter..."
+                                value={filters[colIndex] || ''}
+                                onChange={(e) => setFilter(colIndex, e.target.value)}
+                                style={{
+                                    width: '100%',
+                                    fontSize: '10px',
+                                    padding: '2px',
+                                    border: '1px solid #ddd',
+                                    borderRadius: '2px'
+                                }}
+                            />
+                        </div>
+                    )}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {Array.from({ length: engine.rows }, (_, rowIndex) => (
+              {filteredRows.map((rowIndex) => (
                 <tr key={rowIndex}>
                   <td className="row-header">{rowIndex + 1}</td>
                   {Array.from({ length: engine.cols }, (_, colIndex) => {
