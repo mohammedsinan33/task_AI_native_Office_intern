@@ -1,6 +1,7 @@
-import { useState, useRef, useCallback, useMemo } from 'react'
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import './App.css'
 import { createEngine } from './engine/core.js'
+import { useMultiCellSelection } from './engine/Components/Multicell_selection.jsx'
 
 const TOTAL_ROWS = 50
 const TOTAL_COLS = 50
@@ -10,7 +11,6 @@ export default function App() {
   // Note: The engine maintains its own internal state, so React state is only used for UI updates
   const [engine] = useState(() => createEngine(TOTAL_ROWS, TOTAL_COLS))
   const [version, setVersion] = useState(0)
-  const [selectedCell, setSelectedCell] = useState(null)
   const [editingCell, setEditingCell] = useState(null)
   const [editValue, setEditValue] = useState('')
   // Cell styles are stored separately from engine data
@@ -38,10 +38,9 @@ export default function App() {
     }))
   }, [getCellStyle])
 
-  // ────── Cell editing ──────
+  // ────── Cell editing & Selection ──────
 
   const startEditing = useCallback((row, col) => {
-    setSelectedCell({ r: row, c: col })
     setEditingCell({ r: row, c: col })
     const cellData = engine.getCell(row, col)
     setEditValue(cellData.raw)
@@ -58,51 +57,26 @@ export default function App() {
     setEditingCell(null)
   }, [engine, editValue, forceRerender])
 
-  const handleCellClick = useCallback((row, col) => {
-    if (editingCell && (editingCell.r !== row || editingCell.c !== col)) {
-      commitEdit(editingCell.r, editingCell.c)
-    }
-    if (!editingCell || editingCell.r !== row || editingCell.c !== col) {
-      startEditing(row, col)
-    }
-  }, [editingCell, commitEdit, startEditing])
+  const {
+      selectedCell, setSelectedCell,
+      selectionEnd, setSelectionEnd,
+      isDragging,
+      handleCellMouseDown,
+      handleCellMouseEnter,
+      handleKeyDown
+  } = useMultiCellSelection({
+      engine,
+      editingCell,
+      commitEdit,
+      startEditing,
+      setEditValue,
+      forceRerender
+  })
 
-  // ────── Keyboard navigation ──────
-
-  const handleKeyDown = useCallback((event, row, col) => {
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      commitEdit(row, col)
-      startEditing(Math.min(row + 1, engine.rows - 1), col)
-    } else if (event.key === 'Tab') {
-      event.preventDefault()
-      commitEdit(row, col)
-      startEditing(row, Math.min(col + 1, engine.cols - 1))
-    } else if (event.key === 'Escape') {
-      setEditValue(engine.getCell(row, col).raw)
-      setEditingCell(null)
-    } else if (event.key === 'ArrowDown') {
-      event.preventDefault()
-      commitEdit(row, col)
-      startEditing(Math.min(row + 1, engine.rows - 1), col)
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      commitEdit(row, col)
-      startEditing(Math.max(row - 1, 0), col)
-    } else if (event.key === 'ArrowLeft') {
-      event.preventDefault()
-      commitEdit(row, col)
-      if (col > 0) {
-        startEditing(row, col - 1)
-      } else if (row > 0) {
-        startEditing(row - 1, engine.cols - 1)
-      }
-    } else if (event.key === 'ArrowRight') {
-      event.preventDefault()
-      commitEdit(row, col)
-      startEditing(row, Math.min(col + 1, engine.cols - 1))
-    }
-  }, [engine, commitEdit, startEditing])
+  // Keep double click for explicit edit mode entry
+  const handleCellDoubleClick = useCallback((row, col) => {
+    startEditing(row, col)
+  }, [startEditing])
 
   // ────── Formula bar handlers ──────
 
@@ -366,6 +340,12 @@ export default function App() {
                   {Array.from({ length: engine.cols }, (_, colIndex) => {
                     const isSelected = selectedCell?.r === rowIndex && selectedCell?.c === colIndex
                     const isEditing = editingCell?.r === rowIndex && editingCell?.c === colIndex
+                    const inSelectionRange = selectedCell && selectionEnd &&
+                      rowIndex >= Math.min(selectedCell.r, selectionEnd.r) &&
+                      rowIndex <= Math.max(selectedCell.r, selectionEnd.r) &&
+                      colIndex >= Math.min(selectedCell.c, selectionEnd.c) &&
+                      colIndex <= Math.max(selectedCell.c, selectionEnd.c)
+
                     const cellData = engine.getCell(rowIndex, colIndex)
                     const style = cellStyles[`${rowIndex},${colIndex}`] || {}
                     const displayValue = cellData.error
@@ -375,9 +355,11 @@ export default function App() {
                     return (
                       <td
                         key={colIndex}
-                        className={`cell ${isSelected ? 'selected' : ''}`}
+                        className={`cell ${isSelected ? 'selected' : ''} ${inSelectionRange ? 'range-selected' : ''}`}
                         style={{ background: style.bg || 'white' }}
-                        onMouseDown={(e) => { e.preventDefault(); handleCellClick(rowIndex, colIndex) }}
+                        onMouseDown={(e) => handleCellMouseDown(e, rowIndex, colIndex)}
+                        onMouseEnter={() => handleCellMouseEnter(rowIndex, colIndex)}
+                        onDoubleClick={() => handleCellDoubleClick(rowIndex, colIndex)}
                       >
                         {isEditing ? (
                           <input
@@ -386,7 +368,6 @@ export default function App() {
                             value={editValue}
                             onChange={(e) => setEditValue(e.target.value)}
                             onBlur={() => commitEdit(rowIndex, colIndex)}
-                            onKeyDown={(e) => handleKeyDown(e, rowIndex, colIndex)}
                             ref={isSelected ? cellInputRef : undefined}
                             style={{
                               fontWeight: style.bold ? 'bold' : 'normal',

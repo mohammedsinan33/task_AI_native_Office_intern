@@ -1,6 +1,19 @@
 # SpreadsheetApp
 
-A modern web application built with React and Vite for creating and managing spreadsheets.
+A modern web application built with React and Vite for creating and managing spreadsheets, featuring robust multi-cell selection and formula support.
+
+## Features
+
+- **Spreadsheet Engine**: Custom-built engine handling dependencies, formula evaluation, and undo/redo operations.
+- **Multi-cell Selection**:
+  - Drag to select multiple cells.
+  - Keyboard navigation with Arrow keys.
+  - Shift + Arrow keys for range selection.
+  - "Type to edit" support.
+  - Enter key to edit selected cell or move selection down.
+  - Delete/Backspace to clear selected ranges.
+- **Formulas**: Support for basic arithmetic and functions like SUM, AVG, MIN, MAX.
+- **Formatting**: Bold, Italic, Underline, Font Size, Colors, and Alignment.
 
 ## Prerequisites
 
@@ -80,7 +93,9 @@ SpreadsheetApp/
 │   ├── index.css         # Global styles
 │   ├── assets/           # Static assets (images, icons, etc.)
 │   └── engine/           # Core application logic
-│       └── core.js       # Engine core functionality
+│       ├── core.js       # Engine core functionality
+│       └── Components/   # Engine logic components
+│           └── Multicell_selection.jsx # Selection hook and handlers
 ├── public/               # Static files served as-is
 ├── package.json          # Project dependencies and scripts
 ├── vite.config.js        # Vite configuration
@@ -88,6 +103,28 @@ SpreadsheetApp/
 ├── index.html            # HTML entry point
 └── README.md             # This file
 ```
+
+## Feature Highlights: Multi-Cell Selection
+
+The multi-cell selection feature is powered by a custom React hook `useMultiCellSelection` (`src/engine/Components/Multicell_selection.jsx`), keeping the core logic isolated from the UI rendering.
+
+### Implementation Details:
+
+1.  **State Management**:
+    - `selectedCell`: Acts as the **anchor** or active cell.
+    - `selectionEnd`: Tracks the current extent of the selection range.
+    - `isDragging`: Boolean flag to handle mouse drag events.
+
+2.  **Interaction Logic**:
+    - **Mouse**: `MouseDown` sets the anchor. `MouseEnter` updates `selectionEnd` dynamically as the user drags across the grid. A global `MouseUp` listener ensures dragging stops even if the cursor leaves the grid.
+    - **Keyboard**:
+        - **Shift + Arrow Keys**: Updates `selectionEnd` to expand/contract the rectangular selection.
+        - **Type-to-Edit**: Detects character input on a selected cell to immediately switch to edit mode.
+        - **Delete/Backspace**: Calculates the bounding box of the selection (Min/Max Row & Col) and clears all cells within that range in the engine.
+
+3.  **Rendering**:
+    - The grid rendering loop in `App.jsx` checks if a cell indices fall within the `selectedCell` and `selectionEnd` bounds.
+    - Matches are styled with the `.range-selected` CSS class, applying a semi-transparent overlay.
 
 ## Technologies Used
 
