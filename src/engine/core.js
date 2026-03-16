@@ -792,6 +792,29 @@ export function createEngine(initialRows = 50, initialCols = 50) {
         recalculate()
     }
 
+    function executeSetCells(updates) {
+        // updates: [{ r, c, value }]
+        const changes = []
+        let changed = false
+
+        for (const update of updates) {
+            const { r, c, value } = update
+            const preVal = getCellRaw(r, c).raw
+            if (preVal !== value) {
+                changes.push({ r, c, oldVal: preVal, newVal: value })
+                setCellRaw(r, c, value)
+                changed = true
+            }
+        }
+
+        if (changed) {
+            pushToUndoStack({ type: 'batch', changes })
+        }
+        
+        _generation++
+        recalculate()
+    }
+
     function executeInsertRow(atIndex) {
         const snapshot = takeSnapshot()
         const previousRows = rows
@@ -835,6 +858,27 @@ export function createEngine(initialRows = 50, initialCols = 50) {
             setCellRaw(entry.r, entry.c, entry.oldVal)
             _generation++
             recalculate()
+        } else if (entry.type === 'batch') {
+            const redoChanges = []
+            for (let i = entry.changes.length - 1; i >= 0; i--) {
+                const change = entry.changes[i]
+                const current = getCellRaw(change.r, change.c).raw
+                // We store the current value (newVal in undo becomes oldVal on redo) to handle potential intervening changes if any (though unlikely in std undo stack)
+                // Actually, for redo stack, we just need to reverse the changes.
+                // The redo entry should be { type: 'batch', changes: [{r, c, oldVal: change.newVal, newVal: change.oldVal}] } but actually we want to REDO to the state we just wiped.
+                // So Redo needs to apply change.newVal.
+                // Undo applies change.oldVal.
+                
+                // Let's modify undoStack entry for REDO stack?
+                // Standard undo/redo:
+                // Undo action: Apply oldVal for all changes.
+                // Push to Redo: Same entry? Yes, but maybe update values if we want robustness?
+                // But usually we just reuse the entry if we trust the stack.
+                setCellRaw(change.r, change.c, change.oldVal)
+            }
+            redoStack.push(entry)
+            _generation++
+            recalculate()
         } else {
             // For structural changes (row/col insert/delete), save current state to redo
             // and restore the snapshot from undo entry
@@ -863,6 +907,13 @@ export function createEngine(initialRows = 50, initialCols = 50) {
             const currentValue = getCellRaw(entry.r, entry.c).raw
             undoStack.push({ ...entry, oldVal: currentValue })
             setCellRaw(entry.r, entry.c, entry.newVal)
+            _generation++
+            recalculate()
+        } else if (entry.type === 'batch') {
+            for (const change of entry.changes) {
+                setCellRaw(change.r, change.c, change.newVal)
+            }
+            undoStack.push(entry)
             _generation++
             recalculate()
         } else {
@@ -908,6 +959,7 @@ export function createEngine(initialRows = 50, initialCols = 50) {
         get cols() { return cols },
         getCell: getCellForDisplay,
         setCell: executeSetCell,
+        setCells: executeSetCells,
         insertRow: executeInsertRow,
         deleteRow: executeDeleteRow,
         insertColumn: executeInsertColumn,

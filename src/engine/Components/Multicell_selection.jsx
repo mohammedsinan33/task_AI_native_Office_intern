@@ -154,20 +154,41 @@ export function useMultiCellSelection({
       }
     
     // Handle "Type to Edit"
-    } else if (!editingCell && !ctrlKey && !metaKey && !altKey && key.length === 1) {
+    } else if (!editingCell && !ctrlKey && !metaKey && !altKey && key.length === 1 && !['Delete', 'Backspace'].includes(key)) {
         // Start editing and overwrite content with the typed key
-        startEditing(selectedCell.r, selectedCell.c)
-        setEditValue(key)
+        startEditing(selectedCell.r, selectedCell.c);
+        setEditValue(key);
     }
 
-  }, [engine, commitEdit, selectedCell, selectionEnd, editingCell, startEditing, setEditValue, forceRerender])
+    if ((ctrlKey || metaKey) && !shiftKey && key.toLowerCase() === 'z') {
+      event.preventDefault();
+      // Only undo if not editing a cell, or decide behavior? Use standard undo for engine.
+      if (!editingCell) {
+          if (engine.undo()) forceRerender();
+      }
+      // If editing, let browser handle undo inside input? Standard behavior usually is input undo.
+      return; 
+    }
+    
+    // Handle Redo (Ctrl+Y or Ctrl+Shift+Z)
+    if (((ctrlKey || metaKey) && key.toLowerCase() === 'y') || 
+        ((ctrlKey || metaKey) && shiftKey && key.toLowerCase() === 'z')) {
+      event.preventDefault();
+      if (!editingCell) {
+          if (engine.redo()) forceRerender();
+      }
+      return;
+    }
+
+  }, [engine, commitEdit, selectedCell, selectionEnd, editingCell, startEditing, setEditValue, forceRerender]);
 
   // Attach global keydown listener
   useEffect(() => {
-    const handler = (e) => handleKeyDown(e)
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [handleKeyDown])
+    const handler = (e) => handleKeyDown(e);
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [handleKeyDown]);
+
 
   return {
     selectedCell, setSelectedCell,

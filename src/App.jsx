@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import './App.css'
 import { createEngine } from './engine/core.js'
 import { useMultiCellSelection } from './engine/Components/Multicell_selection.jsx'
+import { useMultiCellCopyPaste } from './engine/Components/Multicell_copy_paste.jsx'
 
 const TOTAL_ROWS = 50
 const TOTAL_COLS = 50
@@ -71,6 +72,14 @@ export default function App() {
       startEditing,
       setEditValue,
       forceRerender
+  })
+
+  useMultiCellCopyPaste({
+    engine,
+    selectedCell,
+    selectionEnd,
+    editingCell,
+    forceRerender
   })
 
   // Keep double click for explicit edit mode entry
